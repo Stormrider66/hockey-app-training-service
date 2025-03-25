@@ -1,215 +1,18 @@
 const { body, param, query, validationResult } = require('express-validator');
 
 /**
- * Validera ett datum (YYYY-MM-DD)
- * @param {string} field - Fältnamnet att validera
- * @param {boolean} required - Om fältet är obligatoriskt
- * @param {Object} options - Ytterligare alternativ som min- och maxdatum
- * @returns {Array} - Valideringsregler
- */
-const dateValidator = (field, required = true, options = {}) => {
-  const validators = [];
-  
-  // Byggna upp valideringskedjan
-  let validator = body(field);
-  
-  if (required) {
-    validator = validator.notEmpty().withMessage(`${field} är obligatoriskt`);
-  } else {
-    validator = validator.optional();
-  }
-  
-  // Datum i formatet YYYY-MM-DD
-  validators.push(
-    validator
-      .isDate().withMessage(`${field} måste vara ett giltigt datum (YYYY-MM-DD)`)
-  );
-  
-  // Om minDatum angavs
-  if (options.minDate) {
-    validators.push(
-      body(field)
-        .custom(value => {
-          if (!value) return true;
-          return new Date(value) >= new Date(options.minDate);
-        })
-        .withMessage(`${field} får inte vara före ${options.minDate}`)
-    );
-  }
-  
-  // Om maxDatum angavs
-  if (options.maxDate) {
-    validators.push(
-      body(field)
-        .custom(value => {
-          if (!value) return true;
-          return new Date(value) <= new Date(options.maxDate);
-        })
-        .withMessage(`${field} får inte vara efter ${options.maxDate}`)
-    );
-  }
-  
-  return validators;
-};
-
-/**
- * Validera en tid (HH:MM)
- * @param {string} field - Fältnamnet att validera
- * @param {boolean} required - Om fältet är obligatoriskt
- * @returns {Array} - Valideringsregler
- */
-const timeValidator = (field, required = true) => {
-  const validators = [];
-  
-  // Byggna upp valideringskedjan
-  let validator = body(field);
-  
-  if (required) {
-    validator = validator.notEmpty().withMessage(`${field} är obligatoriskt`);
-  } else {
-    validator = validator.optional();
-  }
-  
-  // Tid i formatet HH:MM
-  validators.push(
-    validator
-      .matches(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/)
-      .withMessage(`${field} måste vara en giltig tid (HH:MM)`)
-  );
-  
-  return validators;
-};
-
-/**
- * Validera att sluttid är efter starttid om de är på samma dag
- * @returns {Array} - Valideringsregler
- */
-const eventTimeValidator = () => {
-  return [
-    body(['start_time', 'end_time', 'session_date'])
-      .custom((value, { req }) => {
-        // Om vi inte har alla värden, skippa valideringen
-        if (!req.body.start_time || !req.body.end_time || !req.body.session_date) {
-          return true;
-        }
-        
-        const startTime = req.body.start_time;
-        const endTime = req.body.end_time;
-        
-        // Kontrollera att sluttid är efter starttid
-        return startTime < endTime;
-      })
-      .withMessage('Sluttid måste vara efter starttid')
-  ];
-};
-
-/**
- * Validera ett ID (positivt heltal)
- * @param {string} paramName - Parameternamnet att validera
- * @param {string} location - Var parametern finns (params, query, body)
- * @param {boolean} required - Om parametern är obligatorisk
- * @returns {Array} - Valideringsregler
- */
-const idValidator = (paramName, location = 'params', required = true) => {
-  const validators = [];
-  
-  // Välj rätt validator beroende på plats
-  let validator;
-  if (location === 'params') {
-    validator = param(paramName);
-  } else if (location === 'query') {
-    validator = query(paramName);
-  } else {
-    validator = body(paramName);
-  }
-  
-  if (required) {
-    validators.push(
-      validator
-        .notEmpty()
-        .withMessage(`${paramName} är obligatoriskt`)
-    );
-  } else {
-    validator = validator.optional();
-  }
-  
-  validators.push(
-    validator
-      .isInt({ min: 1 })
-      .withMessage(`${paramName} måste vara ett positivt heltal`)
-  );
-  
-  return validators;
-};
-
-/**
- * Validera sessionstyp
- * @param {string} field - Fältnamnet att validera
- * @param {boolean} required - Om fältet är obligatoriskt
- * @returns {Array} - Valideringsregler
- */
-const sessionTypeValidator = (field = 'session_type', required = true) => {
-  const validators = [];
-  
-  // Byggna upp valideringskedjan
-  let validator = body(field);
-  
-  if (required) {
-    validator = validator.notEmpty().withMessage(`${field} är obligatoriskt`);
-  } else {
-    validator = validator.optional();
-  }
-  
-  // Validera mot tillåtna värden
-  validators.push(
-    validator
-      .isIn(['technique', 'tactical', 'game', 'conditioning', 'mixed'])
-      .withMessage(`${field} måste vara en giltig träningstyp (technique, tactical, game, conditioning, mixed)`)
-  );
-  
-  return validators;
-};
-
-/**
- * Validera testtyp
- * @param {string} field - Fältnamnet att validera
- * @param {boolean} required - Om fältet är obligatoriskt
- * @returns {Array} - Valideringsregler
- */
-const testTypeValidator = (field = 'test_type', required = true) => {
-  const validators = [];
-  
-  // Byggna upp valideringskedjan
-  let validator = body(field);
-  
-  if (required) {
-    validator = validator.notEmpty().withMessage(`${field} är obligatoriskt`);
-  } else {
-    validator = validator.optional();
-  }
-  
-  // Validera mot tillåtna värden
-  validators.push(
-    validator
-      .isIn(['speed', 'strength', 'endurance', 'agility', 'flexibility', 'balance', 'technique', 'vo2max'])
-      .withMessage(`${field} måste vara en giltig testtyp`)
-  );
-  
-  return validators;
-};
-
-/**
- * Middleware för att hantera valideringsfel
- * @param {Request} req - Request objekt från Express
- * @param {Response} res - Response objekt från Express
- * @param {Function} next - Next funktion från Express
+ * Felhantering för valideringsfel
+ * @param {Object} req - Express request objekt
+ * @param {Object} res - Express response objekt
+ * @param {Function} next - Express next funktion
+ * @returns {Object|undefined} - Felmeddelande eller går vidare
  */
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   
   if (!errors.isEmpty()) {
     return res.status(400).json({
-      error: true,
+      status: 'error',
       message: 'Valideringsfel',
       errors: errors.array().map(err => ({
         field: err.param,
@@ -221,12 +24,280 @@ const handleValidationErrors = (req, res, next) => {
   next();
 };
 
+// Validering för övningshantering
+const exerciseValidators = {
+  create: [
+    body('name')
+      .notEmpty().withMessage('Övningsnamn krävs')
+      .isLength({ max: 100 }).withMessage('Övningsnamn får inte överskrida 100 tecken'),
+    
+    body('category')
+      .notEmpty().withMessage('Kategori krävs')
+      .isIn(['strength', 'cardio', 'mobility', 'skill', 'recovery', 'warmup', 'cooldown', 'specialized'])
+      .withMessage('Ogiltig övningskategori'),
+    
+    body('equipment')
+      .optional()
+      .isArray().withMessage('Utrustning måste vara en lista'),
+    
+    body('muscle_groups')
+      .optional()
+      .isArray().withMessage('Muskelgrupper måste vara en lista'),
+    
+    body('video_url')
+      .optional()
+      .isURL().withMessage('Ogiltig video-URL'),
+    
+    body('image_url')
+      .optional()
+      .isURL().withMessage('Ogiltig bild-URL')
+  ],
+  
+  update: [
+    param('id')
+      .isInt({ min: 1 }).withMessage('Ogiltigt övnings-ID'),
+    
+    body('name')
+      .optional()
+      .isLength({ max: 100 }).withMessage('Övningsnamn får inte överskrida 100 tecken'),
+    
+    body('category')
+      .optional()
+      .isIn(['strength', 'cardio', 'mobility', 'skill', 'recovery', 'warmup', 'cooldown', 'specialized'])
+      .withMessage('Ogiltig övningskategori'),
+    
+    body('equipment')
+      .optional()
+      .isArray().withMessage('Utrustning måste vara en lista'),
+    
+    body('muscle_groups')
+      .optional()
+      .isArray().withMessage('Muskelgrupper måste vara en lista'),
+    
+    body('video_url')
+      .optional()
+      .isURL().withMessage('Ogiltig video-URL'),
+    
+    body('image_url')
+      .optional()
+      .isURL().withMessage('Ogiltig bild-URL')
+  ],
+  
+  getById: [
+    param('id')
+      .isInt({ min: 1 }).withMessage('Ogiltigt övnings-ID')
+  ],
+  
+  delete: [
+    param('id')
+      .isInt({ min: 1 }).withMessage('Ogiltigt övnings-ID')
+  ],
+  
+  list: [
+    query('category')
+      .optional()
+      .isIn(['strength', 'cardio', 'mobility', 'skill', 'recovery', 'warmup', 'cooldown', 'specialized'])
+      .withMessage('Ogiltig övningskategori'),
+    
+    query('search')
+      .optional()
+      .isLength({ min: 2 }).withMessage('Sökterm måste vara minst 2 tecken')
+  ]
+};
+
+// Validering för testhantering
+const testValidators = {
+  create: [
+    body('name')
+      .notEmpty().withMessage('Testnamn krävs')
+      .isLength({ max: 100 }).withMessage('Testnamn får inte överskrida 100 tecken'),
+    
+    body('test_type')
+      .notEmpty().withMessage('Testtyp krävs')
+      .isIn(['strength', 'speed', 'endurance', 'agility', 'technique', 'power', 'reaction', 'coordination'])
+      .withMessage('Ogiltig testtyp'),
+    
+    body('unit')
+      .notEmpty().withMessage('Måttenhet krävs')
+      .isIn(['kg', 'reps', 'sec', 'min', 'cm', 'm', 'km/h', 'score', 'percent'])
+      .withMessage('Ogiltig måttenhet'),
+    
+    body('equipment')
+      .optional()
+      .isArray().withMessage('Utrustning måste vara en lista')
+  ],
+  
+  update: [
+    param('id')
+      .isInt({ min: 1 }).withMessage('Ogiltigt test-ID'),
+    
+    body('name')
+      .optional()
+      .isLength({ max: 100 }).withMessage('Testnamn får inte överskrida 100 tecken'),
+    
+    body('test_type')
+      .optional()
+      .isIn(['strength', 'speed', 'endurance', 'agility', 'technique', 'power', 'reaction', 'coordination'])
+      .withMessage('Ogiltig testtyp'),
+    
+    body('unit')
+      .optional()
+      .isIn(['kg', 'reps', 'sec', 'min', 'cm', 'm', 'km/h', 'score', 'percent'])
+      .withMessage('Ogiltig måttenhet'),
+    
+    body('equipment')
+      .optional()
+      .isArray().withMessage('Utrustning måste vara en lista')
+  ],
+  
+  getById: [
+    param('id')
+      .isInt({ min: 1 }).withMessage('Ogiltigt test-ID')
+  ],
+  
+  delete: [
+    param('id')
+      .isInt({ min: 1 }).withMessage('Ogiltigt test-ID')
+  ],
+  
+  list: [
+    query('type')
+      .optional()
+      .isIn(['strength', 'speed', 'endurance', 'agility', 'technique', 'power', 'reaction', 'coordination'])
+      .withMessage('Ogiltig testtyp')
+  ]
+};
+
+// Validering för testresultat
+const testResultValidators = {
+  create: [
+    body('test_id')
+      .notEmpty().withMessage('Test-ID krävs')
+      .isInt({ min: 1 }).withMessage('Ogiltigt test-ID'),
+    
+    body('user_id')
+      .notEmpty().withMessage('Användar-ID krävs')
+      .isInt({ min: 1 }).withMessage('Ogiltigt användar-ID'),
+    
+    body('team_id')
+      .optional()
+      .isInt({ min: 1 }).withMessage('Ogiltigt lag-ID'),
+    
+    body('test_date')
+      .notEmpty().withMessage('Testdatum krävs')
+      .isDate().withMessage('Ogiltigt datumformat'),
+    
+    body('result')
+      .notEmpty().withMessage('Testresultat krävs')
+      .isNumeric().withMessage('Resultatet måste vara ett nummer'),
+    
+    body('unit')
+      .notEmpty().withMessage('Måttenhet krävs')
+      .isIn(['kg', 'reps', 'sec', 'min', 'cm', 'm', 'km/h', 'score', 'percent'])
+      .withMessage('Ogiltig måttenhet'),
+    
+    body('test_type')
+      .notEmpty().withMessage('Testtyp krävs')
+      .isIn(['strength', 'speed', 'endurance', 'agility', 'technique', 'power', 'reaction', 'coordination'])
+      .withMessage('Ogiltig testtyp')
+  ],
+  
+  update: [
+    param('id')
+      .isInt({ min: 1 }).withMessage('Ogiltigt testresultat-ID'),
+    
+    body('test_date')
+      .optional()
+      .isDate().withMessage('Ogiltigt datumformat'),
+    
+    body('result')
+      .optional()
+      .isNumeric().withMessage('Resultatet måste vara ett nummer'),
+    
+    body('unit')
+      .optional()
+      .isIn(['kg', 'reps', 'sec', 'min', 'cm', 'm', 'km/h', 'score', 'percent'])
+      .withMessage('Ogiltig måttenhet'),
+    
+    body('test_type')
+      .optional()
+      .isIn(['strength', 'speed', 'endurance', 'agility', 'technique', 'power', 'reaction', 'coordination'])
+      .withMessage('Ogiltig testtyp')
+  ],
+  
+  getById: [
+    param('id')
+      .isInt({ min: 1 }).withMessage('Ogiltigt testresultat-ID')
+  ],
+  
+  delete: [
+    param('id')
+      .isInt({ min: 1 }).withMessage('Ogiltigt testresultat-ID')
+  ],
+  
+  list: [
+    query('userId')
+      .optional()
+      .isInt({ min: 1 }).withMessage('Ogiltigt användar-ID'),
+    
+    query('teamId')
+      .optional()
+      .isInt({ min: 1 }).withMessage('Ogiltigt lag-ID'),
+    
+    query('testId')
+      .optional()
+      .isInt({ min: 1 }).withMessage('Ogiltigt test-ID'),
+    
+    query('testType')
+      .optional()
+      .isIn(['strength', 'speed', 'endurance', 'agility', 'technique', 'power', 'reaction', 'coordination'])
+      .withMessage('Ogiltig testtyp'),
+    
+    query('startDate')
+      .optional()
+      .isDate().withMessage('Ogiltigt startdatum'),
+    
+    query('endDate')
+      .optional()
+      .isDate().withMessage('Ogiltigt slutdatum')
+  ],
+  
+  history: [
+    param('userId')
+      .isInt({ min: 1 }).withMessage('Ogiltigt användar-ID'),
+    
+    param('testId')
+      .isInt({ min: 1 }).withMessage('Ogiltigt test-ID'),
+    
+    query('startDate')
+      .optional()
+      .isDate().withMessage('Ogiltigt startdatum'),
+    
+    query('endDate')
+      .optional()
+      .isDate().withMessage('Ogiltigt slutdatum'),
+    
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 }).withMessage('Gräns måste vara mellan 1 och 100')
+  ],
+  
+  teamStats: [
+    param('teamId')
+      .isInt({ min: 1 }).withMessage('Ogiltigt lag-ID'),
+    
+    param('testId')
+      .isInt({ min: 1 }).withMessage('Ogiltigt test-ID'),
+    
+    query('date')
+      .optional()
+      .isDate().withMessage('Ogiltigt datum')
+  ]
+};
+
 module.exports = {
-  dateValidator,
-  timeValidator,
-  eventTimeValidator,
-  idValidator,
-  sessionTypeValidator,
-  testTypeValidator,
-  handleValidationErrors
+  handleValidationErrors,
+  exerciseValidators,
+  testValidators,
+  testResultValidators
 };
