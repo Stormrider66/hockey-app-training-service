@@ -1,80 +1,91 @@
 require('dotenv').config();
 const express = require('express');
-const { Pool } = require('pg');
 const cors = require('cors');
-const moment = require('moment');
+const { Pool } = require('pg');
+const moment = require('moment-timezone');
 
+// Sätt standardtidszon
+moment.tz.setDefault(process.env.TIMEZONE || 'Europe/Stockholm');
+
+// Skapa Express-app
 const app = express();
 const port = process.env.PORT || 3004;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Sätt upp databaspool
+// Databasanslutning
 const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'hockey_app',
   user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'hockey_app',
   password: process.env.DB_PASSWORD || 'postgres',
+  port: process.env.DB_PORT || 5432,
 });
 
-// Exportera pool för användning i andra moduler
-module.exports = {
-  pool
-};
-
-// Kontrollera databasanslutning
-pool.connect((err, client, release) => {
+// Testa databasanslutning
+pool.query('SELECT NOW()', (err, res) => {
   if (err) {
-    console.error('Fel vid anslutning till databasen:', err);
-    return;
+    console.error('Database connection error:', err.stack);
+  } else {
+    console.log('Database connected at:', res.rows[0].now);
   }
-  console.log('Ansluten till PostgreSQL-databas');
-  release();
 });
 
-// Importera routes
-const iceSessionRoutes = require('./routes/iceSessionRoutes');
-const physicalTrainingRoutes = require('./routes/physicalTrainingRoutes');
-const exerciseRoutes = require('./routes/exerciseRoutes');
-const testResultRoutes = require('./routes/testResultRoutes');
+// Authentication middleware
+const authMiddleware = require('./middleware/auth');
 
-// Basic route för health check
+// Role check middleware
+const { isAdmin, isAdminOrTeamAdmin, isTeamStaff } = require('./middleware/roleCheck');
+
+// Routes
+const exerciseRoutes = require('./routes/exerciseRoutes');
+const testRoutes = require('./routes/testRoutes');
+const testResultRoutes = require('./routes/testResultRoutes');
+const programRoutes = require('./routes/programRoutes');
+
+// Hälsokontroll-endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
-    status: 'UP',
-    service: 'training-service',
+    status: 'success',
+    message: 'Training service is running',
     timestamp: new Date()
   });
 });
 
 // Använd routes
-app.use('/api/ice-sessions', iceSessionRoutes);
-app.use('/api/physical-training', physicalTrainingRoutes);
-app.use('/api/exercises', exerciseRoutes);
-app.use('/api/test-results', testResultRoutes);
+app.use('/api/exercises', authMiddleware, exerciseRoutes);
+app.use('/api/tests', authMiddleware, testRoutes);
+app.use('/api/test-results', authMiddleware, testResultRoutes);
+app.use('/api/programs', authMiddleware, programRoutes);
 
-// Hantera 404
-app.use((req, res) => {
+// 404-hantering
+app.use((req, res, next) => {
   res.status(404).json({
-    error: true,
-    message: 'Endpoint hittades inte'
+    status: 'error',
+    message: 'Resursen hittades inte'
   });
 });
 
-// Error handler
+// Felhantering
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({
-    error: true,
-    message: 'Ett internt serverfel inträffade',
-    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  console.error(err);
+  
+  const statusCode = err.statusCode || 500;
+  const message = err.message || 'Ett fel inträffade';
+  
+  res.status(statusCode).json({
+    status: 'error',
+    message,
+    ...(err.details ? { details: err.details } : {})
   });
 });
 
 // Starta servern
 app.listen(port, () => {
-  console.log(`Training service lyssnar på port ${port}`);
+  console.log(`Training service running on port ${port}`);
 });
+
+module.exports = { app, pool };

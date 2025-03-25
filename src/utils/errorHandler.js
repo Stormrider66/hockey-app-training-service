@@ -1,214 +1,208 @@
 /**
- * Utility för att hantera databasfel och andra feltyper
+ * Hantera databasfel och omvandla till ändpunktsvar
+ * @param {Object} error - Databasfel
+ * @returns {Error} - Formaterad felrespons
  */
+function handleDatabaseError(error) {
+  console.error('Database error:', error);
+  
+  // Kontrollera PostgreSQL-specifika felkoder
+  if (error.code) {
+    // Unique constraint violation
+    if (error.code === '23505') {
+      const uniqueError = new Error(getUniqueViolationMessage(error));
+      uniqueError.statusCode = 400;
+      return uniqueError;
+    }
+    
+    // Foreign key constraint violation
+    if (error.code === '23503') {
+      const fkError = new Error(getForeignKeyViolationMessage(error));
+      fkError.statusCode = 400;
+      return fkError;
+    }
+    
+    // Check constraint violation
+    if (error.code === '23514') {
+      const checkError = new Error('Ogiltig data: ett eller flera villkor uppfylldes inte');
+      checkError.statusCode = 400;
+      return checkError;
+    }
+  }
+  
+  // Om felmeddelandet redan är formaterat med en statuskod
+  if (error.statusCode) {
+    return error;
+  }
+  
+  // Generellt fel
+  const serverError = new Error('Ett databasfel inträffade');
+  serverError.statusCode = 500;
+  return serverError;
+}
 
 /**
- * Hantera databasfel och returnera lämpligt felmeddelande
- * @param {Error} err - Felet som uppstått
- * @param {Response} res - Response objekt från Express
- */
-const handleDatabaseError = (err, res) => {
-  console.error('Databas fel:', err);
-  
-  // PostgreSQL unique violation
-  if (err.code === '23505') {
-    return res.status(409).json({
-      error: true,
-      message: getUniqueViolationMessage(err)
-    });
-  }
-  
-  // PostgreSQL foreign key violation
-  if (err.code === '23503') {
-    return res.status(409).json({
-      error: true,
-      message: getForeignKeyViolationMessage(err)
-    });
-  }
-  
-  // PostgreSQL check constraint violation
-  if (err.code === '23514') {
-    return res.status(400).json({
-      error: true,
-      message: 'Ett eller flera fält innehåller ogiltiga värden'
-    });
-  }
-  
-  // PostgreSQL not null violation
-  if (err.code === '23502') {
-    const column = err.column || 'Ett obligatoriskt fält';
-    return res.status(400).json({
-      error: true,
-      message: `${mapFieldToReadable(column)} får inte vara tomt`
-    });
-  }
-  
-  // Alla andra fel returnerar 500 Internal Server Error
-  return serverError(res, err);
-};
-
-/**
- * Extrahera mer användarvänligt meddelande från PostgreSQL unique constraint violation
- * @param {Error} err - PostgreSQL fel
+ * Extrahera ett användarvänligt meddelande från PostgreSQL unique constraint violation
+ * @param {Object} error - PostgreSQL-fel
  * @returns {string} - Användarvänligt felmeddelande
  */
-const getUniqueViolationMessage = (err) => {
+function getUniqueViolationMessage(error) {
   try {
-    // Försök hitta vilket fält som orsakade felet
-    const detail = err.detail || '';
-    const match = detail.match(/\((.+)\)=\((.+)\)/);
+    const detail = error.detail;
+    const match = detail.match(/\((.+?)\)=\((.+?)\)/);
     
     if (match && match.length >= 3) {
       const field = match[1];
       const value = match[2];
+      const readableField = mapFieldToReadable(field);
       
-      return `${mapFieldToReadable(field)} med värdet '${value}' finns redan`;
+      return `${readableField} '${value}' existerar redan.`;
     }
     
-    return 'En post med detta värde finns redan';
-  } catch (e) {
-    return 'En post med detta värde finns redan';
+    return 'Posten existerar redan.';
+  } catch (err) {
+    console.error('Error parsing unique violation:', err);
+    return 'Posten existerar redan.';
   }
-};
+}
 
 /**
- * Extrahera mer användarvänligt meddelande från PostgreSQL foreign key constraint violation
- * @param {Error} err - PostgreSQL fel
+ * Extrahera ett användarvänligt meddelande från PostgreSQL foreign key constraint violation
+ * @param {Object} error - PostgreSQL-fel
  * @returns {string} - Användarvänligt felmeddelande
  */
-const getForeignKeyViolationMessage = (err) => {
+function getForeignKeyViolationMessage(error) {
   try {
-    // Försök hitta vilken tabell/relation som orsakade felet
-    const detail = err.detail || '';
-    const tableMatch = detail.match(/table "(\w+)"/);
-    const keyMatch = detail.match(/"(\w+)"/);
+    const detail = error.detail;
+    const tableMatch = detail.match(/table "(.+?)"/i);
+    let table = tableMatch && tableMatch[1] ? tableMatch[1] : 'en relaterad post';
     
-    if (tableMatch && tableMatch.length >= 2) {
-      const table = tableMatch[1];
-      
-      if (detail.includes('still referenced')) {
-        return `Kan inte ta bort denna post eftersom den används av ${mapTableToReadable(table)}`;
-      } else {
-        return `Refererad ${mapTableToReadable(table)} finns inte`;
-      }
+    // Ta bort schema-prefixet om det finns
+    if (table.includes('.')) {
+      table = table.split('.')[1];
     }
     
-    return 'Refererad post finns inte eller kan inte raderas pga beroenden';
-  } catch (e) {
-    return 'Refererad post finns inte eller kan inte raderas pga beroenden';
+    const readableTable = mapTableToReadable(table);
+    
+    if (detail.includes('still referenced')) {
+      return `Kan inte ta bort posten eftersom den används av ${readableTable}.`;
+    } else {
+      return `Refererad ${readableTable} existerar inte.`;
+    }
+  } catch (err) {
+    console.error('Error parsing foreign key violation:', err);
+    return 'Ett relaterat data-fel har inträffat.';
   }
-};
+}
 
 /**
- * Mappa databasfält till mer läsbara svenska namn
- * @param {string} field - Databasfält
+ * Omvandla databaskolumnnamn till läsbara svenska namn
+ * @param {string} field - Databaskolumnnamn
  * @returns {string} - Läsbart namn
  */
-const mapFieldToReadable = (field) => {
+function mapFieldToReadable(field) {
   const fieldMap = {
     'name': 'Namnet',
     'email': 'E-postadressen',
-    'title': 'Titeln',
-    'session_date': 'Datumet',
-    'user_id': 'Användaren',
-    'team_id': 'Laget',
-    'exercise_id': 'Övningen'
+    'username': 'Användarnamnet',
+    'test_id': 'Test-ID',
+    'exercise_id': 'Övnings-ID',
+    'user_id': 'Användar-ID',
+    'team_id': 'Lag-ID',
+    'program_id': 'Program-ID',
+    'workout_id': 'Träningspass-ID'
   };
   
-  return fieldMap[field] || field;
-};
+  return fieldMap[field] || `Fältet '${field}'`;
+}
 
 /**
- * Mappa databastabell till mer läsbara svenska namn
- * @param {string} table - Databastabell
+ * Omvandla databastabell-namn till läsbara svenska namn
+ * @param {string} table - Databastabell-namn
  * @returns {string} - Läsbart namn
  */
-const mapTableToReadable = (table) => {
+function mapTableToReadable(table) {
   const tableMap = {
     'exercises': 'övningar',
-    'ice_sessions': 'isträningar',
-    'ice_session_exercises': 'isträningsövningar',
-    'physical_training': 'fysträningar',
-    'physical_training_exercises': 'fysträningsövningar',
-    'test_results': 'testresultat'
+    'tests': 'tester',
+    'test_results': 'testresultat',
+    'programs': 'träningsprogram',
+    'workouts': 'träningspass',
+    'workout_exercises': 'träningspassövningar',
+    'user_program_logs': 'användarloggar',
+    'user_exercise_logs': 'övningsloggar'
   };
   
   return tableMap[table] || table;
-};
+}
 
 /**
- * Hantera 404 Not Found
- * @param {Response} res - Response objekt från Express
+ * Skapa ett 404 Not Found-fel
  * @param {string} message - Felmeddelande
+ * @returns {Error} - Formaterat fel
  */
-const notFoundError = (res, message = 'Resursen kunde inte hittas') => {
-  return res.status(404).json({
-    error: true,
-    message
-  });
-};
+function notFoundError(message = 'Resursen kunde inte hittas') {
+  const error = new Error(message);
+  error.statusCode = 404;
+  return error;
+}
 
 /**
- * Hantera 403 Forbidden
- * @param {Response} res - Response objekt från Express
+ * Skapa ett 403 Forbidden-fel
  * @param {string} message - Felmeddelande
+ * @returns {Error} - Formaterat fel
  */
-const forbiddenError = (res, message = 'Du har inte behörighet att utföra denna åtgärd') => {
-  return res.status(403).json({
-    error: true,
-    message
-  });
-};
+function forbiddenError(message = 'Du har inte behörighet till denna resurs') {
+  const error = new Error(message);
+  error.statusCode = 403;
+  return error;
+}
 
 /**
- * Hantera 400 Bad Request
- * @param {Response} res - Response objekt från Express
+ * Skapa ett 400 Bad Request-fel
  * @param {string} message - Felmeddelande
- * @param {Object} details - Ytterligare detaljer om felet
+ * @param {Object} [details] - Ytterligare detaljer
+ * @returns {Error} - Formaterat fel
  */
-const badRequestError = (res, message = 'Ogiltigt förfrågan', details = null) => {
-  const response = {
-    error: true,
-    message
-  };
-  
+function badRequestError(message = 'Ogiltig förfrågan', details = null) {
+  const error = new Error(message);
+  error.statusCode = 400;
   if (details) {
-    response.details = details;
+    error.details = details;
+  }
+  return error;
+}
+
+/**
+ * Skapa ett 500 Internal Server-fel
+ * @param {string} message - Felmeddelande
+ * @param {Error} [originalError] - Ursprungligt fel för loggning
+ * @returns {Error} - Formaterat fel
+ */
+function serverError(message = 'Ett internt serverfel inträffade', originalError = null) {
+  if (originalError) {
+    console.error('Internal Server Error:', originalError);
   }
   
-  return res.status(400).json(response);
-};
-
-/**
- * Hantera 500 Internal Server Error
- * @param {Response} res - Response objekt från Express
- * @param {Error} err - Felet som uppstått
- */
-const serverError = (res, err) => {
-  console.error('Server fel:', err);
-  
-  return res.status(500).json({
-    error: true,
-    message: 'Ett internt serverfel inträffade',
-    details: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
-};
+  const error = new Error(message);
+  error.statusCode = 500;
+  return error;
+}
 
 /**
  * Hantera valideringsfel från express-validator
- * @param {Response} res - Response objekt från Express
- * @param {Array} errors - Valideringsfel från express-validator
+ * @param {Array} errors - Fel från validationResult
+ * @returns {Error} - Formaterat fel
  */
-const validationError = (res, errors) => {
-  return res.status(400).json({
-    error: true,
-    message: 'Valideringsfel',
-    errors: errors.array().map(err => ({
-      field: err.param,
-      message: err.msg
-    }))
-  });
-};
+function validationError(errors) {
+  const error = new Error('Valideringsfel');
+  error.statusCode = 400;
+  error.details = errors.map(err => ({
+    field: err.param,
+    message: err.msg
+  }));
+  return error;
+}
 
 module.exports = {
   handleDatabaseError,
